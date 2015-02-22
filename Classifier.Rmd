@@ -1,0 +1,117 @@
+---
+title: "Classifier"
+output: html_document
+---
+
+```{r include=FALSE}
+library("caret")
+library("dplyr")
+library("knitr")
+```
+
+
+## Load Data
+
+```{r echo=FALSE}
+
+# Set directory to get de data
+working_dir <- "D:/Proyectos-TID/UM-Analytics/Coursera/8-Practical Machine Learning/project"
+setwd(working_dir)
+
+pml.training <- read.csv("pml-training.csv")
+pml.testing <- read.csv("pml-testing.csv")
+
+pml.training.tbl <- tbl_df(pml.training)
+pml.testing.tbl <- tbl_df(pml.testing)
+
+nrows.training <- dim(pml.training.tbl)[1]
+ncols.training <- dim(pml.training.tbl)[2]
+
+
+```
+The original dataset contains `r nrows.training` observations and `r ncols.training` variables. __The last variable is the outcome and is called classe__ 
+
+```{r echo=FALSE}
+
+summary(pml.training.tbl)
+
+```
+As you can see in the summary many of the variables have a great amount of NAs 
+
+## Cleaning data
+We use the nearZerovar package to remove variables with little variability from the model.
+Then we use the cor function to discover correlated variables keeping only one representative for groups of similar behavior groups. For example, looking the next table showing the correlated variables we can see the variable 2 (roll_belt) is very correlated (above 0.8) with variables 4 (yaw_belt), 5 (total_accel_belt), 10 (accel_belt_y) and 11 (accel_belt_z), so we can remove these variables from the dataset and only keep the variable 2.   
+```{r echo=FALSE}
+
+pml.training.zero <- pml.training.tbl
+pml.training.zero[is.na(pml.training.zero)] <- 0
+
+pre_filter_train <- pml.training.tbl[,-nearZeroVar(pml.training.zero, saveMetrics = FALSE)] %>%
+  select(-(1:5))
+
+Mcor <- abs(cor(select(pre_filter_train,-classe)))
+diag(Mcor) <- 0
+kable(which(Mcor > 0.8, arr.ind=TRUE))
+
+filter_train <- pre_filter_train %>%
+  select(-yaw_belt, -total_accel_belt,-accel_belt_y,-accel_belt_z, -accel_belt_x, -magnet_belt_x, -gyros_arm_y,-magnet_arm_x,-magnet_arm_z,-accel_dumbbell_x,-accel_dumbbell_z,-gyros_dumbbell_z,-gyros_forearm_z,-gyros_forearm_z)
+
+filter_test <- pml.testing.tbl[,-nearZeroVar(pml.training.zero, saveMetrics = FALSE)] %>%
+  select(-(1:5)) %>%
+  select(-yaw_belt, -total_accel_belt,-accel_belt_y,-accel_belt_z, -accel_belt_x, -magnet_belt_x, -gyros_arm_y,-magnet_arm_x,-magnet_arm_z,-accel_dumbbell_x,-accel_dumbbell_z,-gyros_dumbbell_z,-gyros_forearm_z,-gyros_forearm_z)
+
+ncols.filter_train <- dim(filter_train)[2]
+
+```
+
+After all cleaning processes we get a reduce dataset of `r ncols.filter_train` variables including the outcome one (classe) 
+
+## Split data
+We take a random partition of 70% from the dataset for training purpose and the 30% for cross validation.
+
+```{r fig.width=11, fig.height=6, echo=FALSE}
+
+set.seed(32343)
+
+inTrain <- createDataPartition(y=filter_train$classe, p=0.70, list=FALSE)
+training <- filter_train[inTrain,]
+testing <- filter_train[-inTrain,]
+
+
+featurePlot(x=select(training,roll_belt,roll_arm,roll_dumbbell,roll_forearm), y=training$classe,plot="pairs")
+
+
+```
+
+As can be sawn in the figure there are few colored groups (colour represent the outcome variable) with a clear pattern, so the classifier won't probably be very accurate 
+
+## Classifier
+I have tested with several algorithms for multiclass classifier (Random Forest, glmet, Naibe Bayes) but my laptop haven't achieved ending the model train after quite time. Hovewer, it got finish using the lda (Linear Discriminant Analysis) model in little time with a global accuracy about 64%
+
+```{r echo=FALSE}
+
+modelFit <- train(classe ~.,data=training, method="lda")
+
+predictions <- predict(modelFit,newdata=testing)
+confusionMatrix(predictions, testing$classe)
+
+```
+
+The confusion matrix show the most relevant information about the classifier and the stimated accuracy for each class
+
+## Basic Preprocess and PCA
+I have done another tests with simple preprocessing and PCA, but the results haven´t improved the results got with the original model. Ex. with 20 PCs the global accuracy is 10 points (%) below the original model
+
+```{r}
+
+#modelFitPrep <- train(classe ~.,data=training, preProcess=c("center","scale"),method="lda")
+
+preProc <- preProcess(training[,-41],method="pca",pcaComp=20)
+trainPC <- predict(preProc,training[,-41])
+modelFitPC <- train(training$classe ~.,data=trainPC, method="lda")
+testPC <- predict(preProc,testing[,-41])
+
+predictions <- predict(modelFitPC,newdata=testPC)
+confusionMatrix(predictions, testing$classe)
+
+```
